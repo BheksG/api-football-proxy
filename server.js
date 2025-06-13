@@ -1,54 +1,74 @@
 const express = require('express');
-const NodeCache = require('node-cache');
 const axios = require('axios');
+const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
-const cache = new NodeCache({ stdTTL: 600 }); // cache for 10 minutes
+const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.API_KEY;
 
-const API_KEY = process.env.API_FOOTBALL_KEY;
-const API_BASE_URL = 'https://v3.football.api-sports.io';
+app.use(cors());
 
-app.use(express.json());
+// In-memory cache
+const cache = new Map();
+const CACHE_DURATION = 60 * 60 * 1000; // 1 hour in ms
 
-app.get('/fixtures', async (req, res) => {
-  const date = req.query.date;
-  if (!date) return res.status(400).json({ error: 'Missing date parameter' });
+const generateCacheKey = (url) => `cache_${url}`;
 
-  const cacheKey = `fixtures-${date}`;
-  const cached = cache.get(cacheKey);
-  if (cached) return res.json(cached);
+// --- FIXTURES ENDPOINT ---
+app.get('/api/fixtures', async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'Date is required' });
+
+  const url = `https://v3.football.api-sports.io/fixtures?date=${date}`;
+  const cacheKey = generateCacheKey(url);
+
+  if (cache.has(cacheKey) && Date.now() - cache.get(cacheKey).timestamp < CACHE_DURATION) {
+    return res.json(cache.get(cacheKey).data);
+  }
 
   try {
-    const response = await axios.get(`${API_BASE_URL}/fixtures`, {
-      params: { date },
+    const response = await axios.get(url, {
       headers: { 'x-apisports-key': API_KEY }
     });
-    cache.set(cacheKey, response.data);
+    cache.set(cacheKey, { timestamp: Date.now(), data: response.data });
     res.json(response.data);
-  } catch (error) {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch fixtures' });
   }
 });
 
-app.get('/predictions', async (req, res) => {
-  const fixture = req.query.fixture;
-  if (!fixture) return res.status(400).json({ error: 'Missing fixture parameter' });
+// --- PREDICTIONS ENDPOINT ---
+app.get('/api/predictions', async (req, res) => {
+  const { fixture } = req.query;
+  if (!fixture) return res.status(400).json({ error: 'Fixture ID is required' });
 
-  const cacheKey = `predictions-${fixture}`;
-  const cached = cache.get(cacheKey);
-  if (cached) return res.json(cached);
+  const url = `https://v3.football.api-sports.io/predictions?fixture=${fixture}`;
+  const cacheKey = generateCacheKey(url);
+
+  if (cache.has(cacheKey) && Date.now() - cache.get(cacheKey).timestamp < CACHE_DURATION) {
+    return res.json(cache.get(cacheKey).data);
+  }
 
   try {
-    const response = await axios.get(`${API_BASE_URL}/predictions`, {
-      params: { fixture },
+    const response = await axios.get(url, {
       headers: { 'x-apisports-key': API_KEY }
     });
-    cache.set(cacheKey, response.data);
+    cache.set(cacheKey, { timestamp: Date.now(), data: response.data });
     res.json(response.data);
-  } catch (error) {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Failed to fetch predictions' });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API Football Proxy running on port ${PORT}`));
+// --- DEFAULT HOMEPAGE ---
+app.get('/', (req, res) => {
+  res.send('✅ API-Football proxy is running.');
+});
+
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
+
